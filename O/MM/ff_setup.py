@@ -203,9 +203,23 @@ class methods_for_permutation:
         self._xyz_top_ = [] # missing this line was not an error when running one simulation all in one go
         # ! interupting run_simulation_ will not save any xyz data. 
 
+    def run_simulation_w_(self, n_saves, stride_save_frame:int=100, verbose_info : str = ''):
+        self.stride_save_frame = stride_save_frame
+        for i in range(n_saves):
+            self.simulation.step(stride_save_frame)
+            state = self.simulation.context.getState(getPositions=True, enforcePeriodicBox=True)
+            self.simulation.context.setPositions(state.getPositions())
+            self.save_frame_()
+            info = 'frame: '+str(self.n_frames_saved)+' T sampled:'+str(self.temperature.mean().round(3))+' T expected:'+str(self.T)+verbose_info
+            print(info, end='\r')
+
+        self._xyz += [x for x in self._unpermute_(np.array(self._xyz_top_), axis=-2)] # permute after
+        self._xyz_top_ = [] # missing this line was not an error when running one simulation all in one go
+        # ! interupting run_simulation_ will not save any xyz data. 
+  
     def u_(self, r, b=None):
         '''
-        speed up evaluation also
+        speed up evaluation also # ..
         '''
         n_frames = r.shape[0]
         r = np.array(self._permute_(r)) # permute before 
@@ -534,7 +548,7 @@ def custom_LJ_force_(sc, C6_C12_types_dictionary):
 
     for i in range(sc.N):
         for j in range(sc.N):
-            if i >= j:
+            if i > j: # !! not i>=j
                 if include_ij[i,j] < 0.5:
                     force.addExclusion(i,j)
                 else: pass
@@ -576,7 +590,7 @@ def custom_C_force_(sc):
 
     for i in range(sc.N):
         for j in range(sc.N):
-            if i >= j:
+            if i > j: # !! not i>=j
                 if include_ij[i,j] < 0.5:
                     force.addException(*[i, j, 0.0, 0.0, 0.0])
                 else: pass # can add if needed: filter for fudge factor (multiply it to qq_ij)
