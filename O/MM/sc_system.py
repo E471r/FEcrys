@@ -293,7 +293,8 @@ class SingleComponent:
             self._set_r_(self._current_r_ - self._current_COM_)
         else: pass
 
-        self.u_ = self.u_GPU_
+        if hasattr(self, 'u_'): pass
+        else: self.u_ = self.u_GPU_
 
         ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
         self.print('')
