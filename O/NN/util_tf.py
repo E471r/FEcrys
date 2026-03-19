@@ -425,8 +425,8 @@ class FocusedBonds:
         self.focused = focused
 
         #print('bonds min, max:', np.min(X), np.max(X))
-        assert np.min(X) >= self.min_bond_length
-        assert np.max(X) <= self.max_bond_length
+        assert np.min(X) >= self.min_bond_length, f'{np.min(X)} < {self.min_bond_length} nm'
+        assert np.max(X) <= self.max_bond_length, f'{np.max(X)} > {self.max_bond_length} nm'
 
         ranges, centres = get_ranges_centres_(np.array(X), axis=self.axis, keepdims=True,
                                               #percentage_pad=self.percentage_pad,
