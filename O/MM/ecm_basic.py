@@ -93,7 +93,7 @@ class LAMBDA_0:
         self.f0 = f0
         self.f0_parts = f0_parts
 
-        #self.sigma = (2.0*self.beta*self.k)**(-0.5)
+        #self.sigma = (self.beta*self.k)**(-0.5)
 
     #def sample0_(self, n_samples):
     #    # can be used but was not used
