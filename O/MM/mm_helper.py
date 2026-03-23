@@ -688,12 +688,13 @@ class MM_system_helper:
     # simulation:
 
     def set_arrays_blank_(self,):
-        self._xyz = []
+        self._xyz = [] # deque() from collections
         self._u = []
         self._temperature = []
         self._boxes = []
         self._COMs = []
         self.n_frames_saved = 0
+        self.time_elapsed = 0.0 # seconds
         # self._Ps = []
         # self._v = []
 
@@ -704,13 +705,16 @@ class MM_system_helper:
         self._boxes.append( self._current_b_ )        # nm
         self._COMs.append( self._current_COM_ )       # nm
         self.n_frames_saved += 1                      # frames
+        self.time_elapsed += self._time_elapsed_saved_frame_
         # self._Ps.append( self._current_P_ )
         # self._v.append(self._current_v_)
 
     def run_simulation_(self, n_saves, stride_save_frame:int=100, verbose_info : str = ''):
         self.stride_save_frame = stride_save_frame
         for i in range(n_saves):
+            t_start = time.time()
             self.simulation.step(stride_save_frame)
+            self._time_elapsed_saved_frame_ = (time.time() - t_start) # NB: save_frame_ is very slow! this does not count it
             self.save_frame_()
             info = 'frame: '+str(self.n_frames_saved)+' T sampled:'+str(self.temperature.mean().round(3))+' T expected:'+str(self.T)+verbose_info
             print(info, end='\r')
@@ -719,7 +723,9 @@ class MM_system_helper:
         ''' w : wrapped ; for NVT in the presence of shearing (at higher T) or alchemical '''
         self.stride_save_frame = stride_save_frame
         for i in range(n_saves):
+            t_start = time.time()
             self.simulation.step(stride_save_frame)
+            self._time_elapsed_saved_frame_ = (time.time() - t_start) # NB: save_frame_ is very slow! this does not count it
             state = self.simulation.context.getState(getPositions=True, enforcePeriodicBox=True)
             self.simulation.context.setPositions(state.getPositions())
             self.save_frame_()
