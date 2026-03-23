@@ -613,8 +613,79 @@ class MM_system_helper:
         self._set_b_(_b)
 
         return output
+        
+    # harmonic approximation:
+    
+    def _Hessian_(self, r, b=None, dr = 0.0001,
+                  fixed_atom_index = None,
+                  temperature_reduced = True,
+                  ):
+        if temperature_reduced:
+            assert self.beta > 1e-6, f'temperature {1/(self.beta*CONST_kB)} K is too low'
+            temp_rescale = float(self.beta)
+        else: temp_rescale = 1.0
 
-    # sim:
+        fixed_atom_mask = np.ones([self.N,3])
+        if fixed_atom_index is not None: 
+            fixed_atom_mask[fixed_atom_index] = 0.0
+        else: pass
+        fixed_atom_mask = fixed_atom_mask.flatten()
+        inds_valid = np.where(fixed_atom_mask>0.5)[0]
+
+        r_flat = np.array(r.flatten())
+        Hessian = np.zeros([self.N*3, self.N*3])
+        for i in inds_valid:
+            dr_i = np.zeros([self.N*3])
+            dr_i[i] = dr
+            A = reshape_to_atoms_np_(np.array(r_flat + dr_i)[None,...], n_atoms_in_molecule=self.N, n_molecules=1)
+            B = reshape_to_atoms_np_(np.array(r_flat - dr_i)[None,...], n_atoms_in_molecule=self.N, n_molecules=1)
+            dUdr_A = - self.F_GPU_(A, b=b).flatten()
+            dUdr_B = - self.F_GPU_(B, b=b).flatten()
+            Hessian[i] = dUdr_B - dUdr_A
+
+        return Hessian * temp_rescale / (2.0 * dr) # finite difference of the forces
+
+    def harmonic_FE_(self, r, b, fixed_atom_index:int, dr = 0.0001, n_minimisations=1):
+        ''' Classical Harmonic Approximation
+        Inputs:
+            r : (N,3) array of positions
+            b : (3,3) array of box 
+            fixed_atom_index : index of atom to keep fixed; the only constraint in a crystal.
+        Parameters:
+            dr : finite difference parameter; can try a few small positive values for a stable output
+            n_minimisations : number of times to run potential energy gradient descent (box is fixed).
+
+        Output: float : crystal FE in kT
+
+        Limitation: 
+            Classical and requires finite temperature. 
+            Box is not minimised, fixed as the original input (b) provided.
+        Compatibility: 
+            can also use with multicomponent crystal at a later stage.
+        '''
+        # checking inputs are for a single crystal
+        assert r.shape[-2:] == (self.N,3), 'Harmonic_FE_ : r.shape incorrect'
+        assert b.shape[-2:] == (3,3), 'Harmonic_FE_ : b.shape incorrect'
+        r = np.array(r).reshape([1, self.N, 3])
+        b = np.array(b).reshape([1, 3, 3])
+
+        for itter in range(n_minimisations):
+            # find the local minimum, r only (lattice minimsation not implemented here yet)
+            r = self.minimise_xyz_(r, b=b) 
+
+        u0 = self._U_GPU_(r, b=b).sum() * self.beta
+        # units: kT / nm**2
+        H = self._Hessian_(r, b=b, dr=dr, fixed_atom_index=fixed_atom_index)
+        l_H = np.linalg.svd(H)[1][:-3]         # choosing top (N-1)*3 eigenvalues, others are zero
+        FE = 0.0
+        # energy:
+        FE += u0                               # potential energy at the local minimum in kT
+        # entropy:
+        FE += np.log(l_H).sum()*0.5            # positive sign here, because H = inv(Cov)
+        FE -= (self.N-1)*3*0.5*np.log(2*np.pi) # (N-1)*3 degrees of freedom !
+        return FE # kT       
+
+    # simulation:
 
     def set_arrays_blank_(self,):
         self._xyz = []
