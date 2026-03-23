@@ -299,11 +299,11 @@ class SingleComponent:
         ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
         self.print('')
 
-
     def save_simulation_data_(self, path_and_name:str):
         '''
         simulation timescale = len(u) * stride_save_frame * timestep_ps
         '''
+        # print(f'Saving MD data. This took {self.time_elapsed} seconds to sample.')
         dataset = {'xyz':self.xyz,
                    'COMs':self.COMs,
                    'b':self.boxes,
@@ -311,6 +311,7 @@ class SingleComponent:
                    'T':self.temperature,
                    'rbv':[self._current_r_, self._current_b_, self._current_v_], # to resume
                    'stride_save_frame':self.stride_save_frame,
+                   'time_elapsed':self.time_elapsed,
                    }
         assert hasattr(self, 'simulation')
         simulation_data = {'MD dataset':dataset,
