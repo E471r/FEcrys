@@ -646,7 +646,7 @@ class MM_system_helper:
         return Hessian * temp_rescale / (2.0 * dr) # finite difference of the forces
 
     def harmonic_FE_(self, r, b, fixed_atom_index:int, dr = 0.0001, n_minimisations=1):
-        ''' Classical Harmonic Approximation
+        ''' Classical Harmonic Approximation : configurational part only. Contribution from momenta not included here.
         Inputs:
             r : (N,3) array of positions
             b : (3,3) array of box 
@@ -655,7 +655,7 @@ class MM_system_helper:
             dr : finite difference parameter; can try a few small positive values for a stable output
             n_minimisations : number of times to run potential energy gradient descent (box is fixed).
 
-        Output: float : crystal FE in kT
+        Output: float : configurational Helmholtz crystal FE in kT
 
         Limitation: 
             Classical and requires finite temperature. 
