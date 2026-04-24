@@ -41,6 +41,8 @@ import mdtraj
 
 import pickle
 
+import textwrap
+
 ## ## 
 
 def inject_methods_from_another_class_(target_instance, source_class, include_properties=False):
@@ -445,6 +447,44 @@ def K_to_C_(K):
 
 def C_to_K_(C):
     return C + 273.15
+
+## ## 
+
+def ADAM_np_(grad_, 
+            x0, 
+            constraint_ = lambda x : x,
+            max_itter = 1e20,
+            alpha=0.005, 
+            betas=[0.7,0.999], 
+            tol=1e-4,
+            ):
+
+    beta1, beta2 = betas 
+    one_minus_beta1 = 1.0-beta1
+    one_minus_beta2 = 1.0-beta2
+    eps = 1e-8
+
+    v = np.zeros_like(x0)
+    s = np.zeros_like(x0)
+
+    a = 1.0
+    grad =  np.ones_like(x0)*1e10
+
+    while np.abs(grad).max() > tol and max_itter > a - 1.0:
+        grad = grad_(x0)
+
+        v = beta1*v + one_minus_beta1*grad
+        s = beta2*s + one_minus_beta2*grad*grad
+
+        _v = v #/ (1.0 - beta1**a)
+        _s = s #/ (1.0 - beta2**a)
+
+        sqrt_s_add_eps_inv = 1.0 / (_s**0.5 + eps)
+        x0 = x0 - alpha*_v*sqrt_s_add_eps_inv
+        x0 = constraint_(x0)
+        a += 1.0
+        
+    return x0, a-1.0
 
 ## ## 
 
