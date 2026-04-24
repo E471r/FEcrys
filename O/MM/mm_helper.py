@@ -646,10 +646,11 @@ class MM_system_helper:
         return Hessian * temp_rescale / (2.0 * dr) # finite difference of the forces
 
     def harmonic_FE_(self, r, b, fixed_atom_index:int, dr = 0.0001,
-                     n_steps_openmm_minimisation = 1,
-                     return_minimiser = False, # to find entropy and the structure
-                     # n_steps_simple_minimisation = 0, # 0 : None
-                     # alpha_simple_minimisation = 0.0000001,
+                     # minimisation settings:
+                     n_steps_openmm = 2,
+                     n_steps_adam = 5000, # 0 : None to turn it off
+                     alpha_adam = 1e-4,
+                     verbose = True,
                      ):
         ''' Classical Harmonic Approximation : configurational part only. Momentum not included here.
         Inputs:
@@ -660,11 +661,15 @@ class MM_system_helper:
             dr : finite difference parameter; can try a few small positive values for a stable output
             n_minimisations : number of times to run potential energy gradient descent (box is fixed).
 
-        Output: float : configurational Helmholtz crystal FE in kT
+        Output: dictionary = {
+            'f0' = configurational Helmholtz per system FE in kT at the local minimum
+            'u0' = potential energy per system in kT at the local minimum
+            'r0' = minimised structure at the local minimum
+            }
 
         Limitation: 
-            Classical and requires finite temperature. 
-            Box is not minimised, fixed as the original input (b) provided.
+            Classical and requires finite temperature
+            Box is not minimised, fixed as the original input (b) provided
         '''
         # checking inputs are for a single crystal
         assert r.shape[-2:] == (self.N,3), 'Harmonic_FE_ : r.shape incorrect'
@@ -677,22 +682,35 @@ class MM_system_helper:
         r = fix_atom_(r)
         u0_initial = self._U_GPU_(r, b=b).sum() * self.beta
 
-        for step in range(n_steps_openmm_minimisation):
+        for step in range(n_steps_openmm):
             # find the local minimum, r only (lattice minimsation not implemented here yet)
             r = self.minimise_xyz_(r, b=b)
             r = fix_atom_(r)
         u0_openmm_minimised = self._U_GPU_(r, b=b).sum() * self.beta
         assert u0_openmm_minimised <= u0_initial
+        if verbose: print(textwrap.dedent(f'''
+            minimised with OpenMM for {step+1} steps
+            u : {u0_initial} -> {u0_openmm_minimised}
+            '''))
 
-        #if n_steps_simple_minimisation > 0:
-        #    for step in range(n_steps_simple_minimisation):
-        #        r += self.F_GPU_(r, b=b)*alpha_simple_minimisation
-        #        r = fix_atom_(r)
-        #    u0_fully_minimised = self._U_GPU_(r, b=b).sum() * self.beta
-        #    assert u0_fully_minimised <= u0_openmm_minimised
+        if n_steps_adam > 0:
+            r, n_steps = ADAM_np_(grad_ = lambda _r : - self.F_GPU_(_r, b=b), 
+                                  x0 = r, 
+                                  constraint_ = fix_atom_,
+                                  max_itter = n_steps_adam,
+                                  alpha = alpha_adam,
+                                  betas=[0.7,0.999], tol=1e-4,
+                                  )
+            u0_fully_minimised = self._U_GPU_(r, b=b).sum() * self.beta
+            assert u0_fully_minimised <= u0_openmm_minimised
+            if verbose: print(textwrap.dedent(f'''
+                minimised with ADAM for {int(n_steps)} steps
+                u : {u0_openmm_minimised} -> {u0_fully_minimised}
+                '''))
 
         u0 = self._U_GPU_(r, b=b).sum() * self.beta
         # units: kT / nm**2
+        if verbose: print(f'estimating Hessian ({self.N*3}, {self.N*3}):')
         H = self._Hessian_(r, b=b, dr=dr, fixed_atom_index=fixed_atom_index)
         l_H = np.linalg.svd(H)[1][:-3]         # choosing top (N-1)*3 eigenvalues, others are zero
         FE = 0.0
@@ -702,10 +720,9 @@ class MM_system_helper:
         FE += np.log(l_H).sum()*0.5            # positive sign here, because H = inv(Cov)
         FE -= (self.N-1)*3*0.5*np.log(2*np.pi) # (N-1)*3 degrees of freedom !
         
-        if not return_minimiser:
-            return FE # kT
-        else:
-            return FE, u0, r # kT, kT, nm
+        output = {'f0':FE, 'u0':u0, 'r0': r} # kT, kT, nm
+
+        return output
 
     # simulation:
 
