@@ -682,16 +682,17 @@ class MM_system_helper:
         r = fix_atom_(r)
         u0_initial = self._U_GPU_(r, b=b).sum() * self.beta
 
-        for step in range(n_steps_openmm):
-            # find the local minimum, r only (lattice minimsation not implemented here yet)
-            r = self.minimise_xyz_(r, b=b)
-            r = fix_atom_(r)
-        u0_openmm_minimised = self._U_GPU_(r, b=b).sum() * self.beta
-        assert u0_openmm_minimised <= u0_initial
-        if verbose: print(textwrap.dedent(f'''
-            minimised with OpenMM for {step+1} steps
-            u : {u0_initial} -> {u0_openmm_minimised}
-            '''))
+        if n_steps_openmm > 0:
+            for step in range(n_steps_openmm):
+                # find the local minimum, r only (lattice minimsation not implemented here yet)
+                r = self.minimise_xyz_(r, b=b)
+                r = fix_atom_(r)
+            u0_openmm_minimised = self._U_GPU_(r, b=b).sum() * self.beta
+            assert u0_openmm_minimised <= u0_initial
+            if verbose: print(textwrap.dedent(f'''
+                minimised with OpenMM for {n_steps_openmm} steps
+                u : {u0_initial} -> {u0_openmm_minimised}
+                '''))
 
         if n_steps_adam > 0:
             r, n_steps = ADAM_np_(grad_ = lambda _r : - self.F_GPU_(_r, b=b), 
