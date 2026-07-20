@@ -486,15 +486,50 @@ def ADAM_np_(grad_,
         
     return x0, a-1.0
 
+def make_COM_removal_matrix_general_(masses, dim=3, return_parts = False):
+    '''
+    r_flat_centred = M.dot(r_flat) ; (3N,) -> (3N,)
+    
+    # make_COM_removal_matrix_general_(ones) = make_COM_removal_matrix_(len(ones))
+
+    Output: square matrix M (general case)
+        general M is non-symmetric, with:
+        dim first eigenvalues are often > 1
+        (n_particles - 1)*dim - dim next eigenvalues are 1
+        remaining dim eigenvalues are 0
+    '''
+    masses = np.array(masses).flatten()
+    reduced_masses = masses/masses.sum()
+
+    N = len(masses)
+    M = np.zeros([N*dim, N*dim])
+    ia = 0
+    for i in range(N):
+        for _i in range(dim):
+            ja = 0
+            for j in range(N):
+                for _j in range(dim):
+                    if ia==ja:
+                        M[ia,ja] = 1.0 - reduced_masses[j]
+                    elif not (ia-ja)%dim:
+                        M[ia,ja] = - reduced_masses[j]
+                    else: pass 
+                    ja += 1
+            ia += 1
+
+    output = {"M":M}
+
+    if return_parts:
+        U,s,V = np.linalg.svd(M)
+        s_sqrt = s[:-dim]**0.5
+        Ji = U[:,:-dim].dot(np.diag(s_sqrt))
+        Jf = np.diag(s_sqrt).dot(V[:-dim,:])
+        # Ji.dot(Jf) = M
+        output["Ji"]     = Ji
+        output["Jf"]     = Jf
+        output["s_sqrt"] = s_sqrt
+        output["ladJ"]   = np.log(s_sqrt).sum() # the 'magic' offset between methods?
+
+    return  output
+    
 ## ## 
-
-
-
-
-
-
-
-
-
-
-
