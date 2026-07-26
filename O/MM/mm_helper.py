@@ -772,8 +772,8 @@ class MM_system_helper:
     
             FE_svd += np.log(s[:-3]*self.beta).sum()*0.5
             outputs['svd']['f0'] = FE_svd # kT
-        ###########################################
         else: pass
+        ###########################################
         
         return outputs
 
