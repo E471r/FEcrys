@@ -751,28 +751,30 @@ class MM_system_helper:
         FE_eigh += np.log(l_val[inds_positive]*self.beta).sum()*0.5
         outputs['eigh']['f0'] = FE_eigh # kT
         ###########################################
-        FE_svd = float(FE)
-        U, s = np.linalg.svd(H_centred)[:2]
-        outputs['svd'] = {}
-        ## the same when eigh works correctly.
-        #outputs['svd']['l_val'] = s
-        #outputs['svd']['U_vec'] = U
-        
-        msg = f'f_svd  : 4 smallest eigenvalues were: {s[-4:].round(4)}, '
-        if s[-4] > eps:  
-            msg += 'this is expected from svd (of H_centred).'
-            ## False anyway because svd is not the correct method to use here
-            ## outputs['svd']['result_is_stable'] = True
-        else: 
-            msg += 'this is likely incorrect.'
-            ## False anyway because svd is not the correct method to use here
-            ## outputs['svd']['result_is_stable'] = False
-        if verbose: print(msg)
-
-        FE_svd += np.log(s[:-3]*self.beta).sum()*0.5
-        outputs['svd']['f0'] = FE_svd # kT
-        ###########################################
+        if include_svd_result:
+            FE_svd = float(FE)
+            U, s = np.linalg.svd(H_centred)[:2]
+            outputs['svd'] = {}
+            ## the same when eigh works correctly.
+            #outputs['svd']['l_val'] = s
+            #outputs['svd']['U_vec'] = U
+            
+            msg = f'f_svd  : 4 smallest eigenvalues were: {s[-4:].round(4)}, '
+            if s[-4] > eps:  
+                msg += 'this is expected from svd (of H_centred).'
+                ## False anyway because svd is not the correct method to use here
+                ## outputs['svd']['result_is_stable'] = True
+            else: 
+                msg += 'this is likely incorrect.'
+                ## False anyway because svd is not the correct method to use here
+                ## outputs['svd']['result_is_stable'] = False
+            if verbose: print(msg)
     
+            FE_svd += np.log(s[:-3]*self.beta).sum()*0.5
+            outputs['svd']['f0'] = FE_svd # kT
+        ###########################################
+        else: pass
+        
         return outputs
 
     def harmonic_FE_(self, r,  b,
