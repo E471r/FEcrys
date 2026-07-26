@@ -615,7 +615,232 @@ class MM_system_helper:
         return output
         
     # harmonic approximation:
+    # v2:
+    def _minimise_r_fully_( self, r, b, fixed_atom_index:int = None,
+                            # minimisation settings:
+                            n_steps_openmm = 2,
+                            n_steps_adam = 5000, # 0 : None to turn it off
+                            alpha_adam = 1e-4,
+                            verbose = True,
+                            ):
+        # TODO: can can add convergence criterion such as np.abs(F).max() < threshold.
+        
+        # checking inputs are for a single crystal
+        assert r.shape[-2:] == (self.N,3), 'Harmonic_FE_ : r.shape incorrect'
+        assert b.shape[-2:] == (3,3), 'Harmonic_FE_ : b.shape incorrect'
+        r = np.array(r).reshape([1, self.N, 3])
+        b = np.array(b).reshape([1, 3, 3])
+
+        if fixed_atom_index is not None:
+            fix_atom_ = lambda r : r - r[:,fixed_atom_index:fixed_atom_index+1]
+        else:
+            fix_atom_ = lambda r : r
+
+        r = fix_atom_(r)
+        u0_initial = self._U_GPU_(r, b=b).sum() * self.beta
+
+        if n_steps_openmm > 0:
+            for step in range(n_steps_openmm):
+                # find the local minimum, r only (lattice minimsation not implemented here yet)
+                r = self.minimise_xyz_(r, b=b)
+                r = fix_atom_(r)
+            u0_openmm_minimised = self._U_GPU_(r, b=b).sum() * self.beta
+            assert u0_openmm_minimised <= u0_initial
+            if verbose: print(textwrap.dedent(f'''
+                minimised with OpenMM for {n_steps_openmm} steps
+                u : {u0_initial} -> {u0_openmm_minimised}
+                '''))
+
+        if n_steps_adam > 0:
+            r, n_steps = ADAM_np_(grad_ = lambda _r : - self.F_GPU_(_r, b=b), 
+                                  x0 = r, 
+                                  constraint_ = fix_atom_,
+                                  max_itter = n_steps_adam,
+                                  alpha = alpha_adam,
+                                  betas=[0.7,0.999], tol=1e-4,
+                                  )
+            u0_fully_minimised = self._U_GPU_(r, b=b).sum() * self.beta
+            assert u0_fully_minimised <= u0_openmm_minimised
+            if verbose: print(textwrap.dedent(f'''
+                minimised with ADAM for {int(n_steps)} steps
+                u : {u0_openmm_minimised} -> {u0_fully_minimised}
+                '''))
+        return r, b
+
+    def _ComputeHessian_(self,
+                         r,
+                         b, 
+                         dr = 0.001,
+                        ):
+        outputs = {}
+
+        r = np.array(r).reshape([1,self.N,3])
+        b = np.array(b).reshape([1,3,3])
+
+        outputs['x0'] = [np.array(r[0]), np.array(b[0])]
+        outputs['U0'] = self._U_GPU_(r, b)[0][0]
+
+        # finite difference of the forces # no need for COM masking.
+        r_flat = np.array(r.flatten())
+        Hessian = np.zeros([self.N*3, self.N*3])
+        for i in range(self.N*3):
+            dr_i = np.zeros([self.N*3])
+            dr_i[i] = dr
+            dUdr_L = - self.F_GPU_((r_flat - dr_i).reshape([1,self.N,3]), b=b).flatten()
+            dUdr_R = - self.F_GPU_((r_flat + dr_i).reshape([1,self.N,3]), b=b).flatten()
+            Hessian[i] = dUdr_R - dUdr_L # corrected the sign
+
+        outputs['H'] = Hessian  / (2.0 * dr)
+
+        return outputs
+
+    def _ComputeFEFromHessian_(self, 
+                              Ouputs_ComputeHessian,
+                              symmetrise_hessian=True,
+                              verbose = True,
+                              include_svd_result=False,
+                              ):
+        outputs = Ouputs_ComputeHessian
+
+        U0 = float(outputs['U0'])                 # kJ/mol
+        H  = np.array(outputs['H'])               # kJ/(mol*nm*nm)
+
+        if symmetrise_hessian: 
+            H = 0.5*(H + H.T)
+            outputs['H_sym'] = H
+        else: outputs['H_sym'] = None
+
+        M = make_COM_removal_matrix_general_(np.ones([self.N]), dim=3, return_parts=False)['M']
+        
+        H_centred = M.T.dot(H).dot(M)
+        outputs['H_centred'] = H_centred
+
+        ###########################################
+        FE = 0.0                                  # kT
+        # energy:
+        u0 = U0*self.beta                         # kT
+        outputs['u0'] = u0
+        FE += u0                                  # potential energy at the local minimum in kT
+        # entropy:
+        FE -= (self.N-1)*3*0.5*np.log(2*np.pi)    # (N-1)*3 degrees of freedom (expected in Hessian)
+
+        eps = 1e-4
+        ###########################################
+        FE_eigh = float(FE)
+        l_val, U_vec =  np.linalg.eigh(H_centred)
+        inds_sort = np.argsort(-l_val)
+        l_val = l_val[inds_sort]
+        U_vec = U_vec[:,inds_sort]
+        outputs['eigh'] = {}
+        outputs['eigh']['l_val'] = l_val
+        outputs['eigh']['U_vec'] = U_vec
+        inds_positive = np.where(l_val > eps)[0]
+        n_eigenmodes_discard = len(l_val) - len(inds_positive)
+
+        msg = f'f_eigh : {n_eigenmodes_discard} Hessian eigenvalues were <= 0; discarded, '
+        if n_eigenmodes_discard == 3:
+            msg += 'this is correct. '
+            msg += 'SVD result should also match.'
+            outputs['eigh']['result_is_stable'] = True
+        else:
+            msg += 'the result is likely incorrect.'
+            msg += '\nWas the structure minimised fully? SVD result may differ!'
+            outputs['eigh']['result_is_stable'] = False
+        if verbose: print(msg)
+
+        FE_eigh += np.log(l_val[inds_positive]*self.beta).sum()*0.5
+        outputs['eigh']['f0'] = FE_eigh # kT
+        ###########################################
+        FE_svd = float(FE)
+        U, s = np.linalg.svd(H_centred)[:2]
+        outputs['svd'] = {}
+        ## the same when eigh works correctly.
+        #outputs['svd']['l_val'] = s
+        #outputs['svd']['U_vec'] = U
+        
+        msg = f'f_svd  : 4 smallest eigenvalues were: {s[-4:].round(4)}, '
+        if s[-4] > eps:  
+            msg += 'this is expected from svd (of H_centred).'
+            ## False anyway because svd is not the correct method to use here
+            ## outputs['svd']['result_is_stable'] = True
+        else: 
+            msg += 'this is likely incorrect.'
+            ## False anyway because svd is not the correct method to use here
+            ## outputs['svd']['result_is_stable'] = False
+        if verbose: print(msg)
+
+        FE_svd += np.log(s[:-3]*self.beta).sum()*0.5
+        outputs['svd']['f0'] = FE_svd # kT
+        ###########################################
     
+        return outputs
+
+    def harmonic_FE_(self, r,  b,
+                            # special case:
+                            fixed_atom_index = None,
+                            # finite different parameter:
+                            dr = 0.001, # nm # 0.001 nm seems good with single precision.
+                            symmetrise_hessian = True, # keep True is ok.
+                            # minimisation settings:
+                            n_steps_openmm = 2,
+                            n_steps_adam = 5000, # 0 : None to turn it off
+                            alpha_adam = 1e-4,
+                            verbose = True,
+                            # Legacy (both agree when 'result_is_stable'):
+                            include_svd_result = True,
+                            ):
+        ''' v2 of the method
+
+        Classical Harmonic Approximation : Configurational part of FE only. 
+                                           Momentum FE contribution not included.
+        
+        Inputs:
+            r : (N,3) array of positions
+            b : (3,3) array of box 
+            fixed_atom_index : index of atom to keep fixed; the only constraint in a crystal.
+        Parameters:
+            dr : finite difference parameter; can try small positive values for a stable output
+            n_steps_openmm : number of times to run potential energy gradient descent (box is fixed).
+            n_steps_adam   : number of gradient descent steps to minimise the structure even more.
+
+        
+        Output: dictionary = {
+            'f0' = configurational Helmholtz per system FE in kT at the local minimum
+            'u0' = potential energy per system in kT at the local minimum
+            'x0' = minimised structure at the local minimum
+            # use 'f0' from 'eigh' as the general result.
+            # use ladJ similar to below to align result from other COM-removal methods.
+            }
+
+        Limitation: 
+            Box is not minimised, fixed as the original input (b) provided
+        '''
+        if verbose: print(f'... minimising structure in fixed box provided: ...')
+        r, b = self._minimise_r_fully_(r=r, b=b, fixed_atom_index=fixed_atom_index,
+                                    n_steps_openmm = n_steps_openmm,
+                                    n_steps_adam = n_steps_adam,
+                                    alpha_adam = alpha_adam ,
+                                    verbose = verbose
+                                    )
+        if verbose: print(f'... estimating Hessian ({self.N*3}, {self.N*3}): ...')
+        outputs = self._ComputeHessian_(r=r, b=b, dr=dr)
+        if verbose: print(f'... diagonalising Hessian: ...')
+        outputs = self._ComputeFEFromHessian_(outputs, 
+                                              symmetrise_hessian=symmetrise_hessian, 
+                                              verbose=verbose, 
+                                              include_svd_result=include_svd_result)
+
+        if fixed_atom_index is not None:
+            if verbose: print(f'... fixed_atom_index != None, see f0_fixed_atom in results ...')
+            weights = np.zeros([self.N]); weights[0] = 1.0
+            ladJ = 2.0 * make_COM_removal_matrix_general_(weights, dim=3, return_parts=True)['ladJ']
+            outputs['eigh']['f0_fixed_atom'] = outputs['eigh']['f0'] + ladJ
+            if include_svd_result: outputs['svd']['f0_fixed_atom'] = outputs['svd']['f0'] + ladJ
+        else: pass
+
+        return outputs
+    
+    """ v1 (OLD)
     def _Hessian_(self, r, b=None, dr = 0.0001,
                   fixed_atom_index = None,
                   temperature_reduced = True,
@@ -724,7 +949,8 @@ class MM_system_helper:
         output = {'f0':FE, 'u0':u0, 'r0': r} # kT, kT, nm
 
         return output
-
+    """
+    
     # simulation:
 
     def set_arrays_blank_(self,):
