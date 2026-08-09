@@ -727,11 +727,7 @@ class MM_system_helper:
         eps = 1e-4
         ###########################################
         FE_eigh = float(FE)
-        l_val, U_vec =  np.linalg.eigh(H_centred)
-        inds_sort = np.argsort(-l_val)
-        l_val = l_val[inds_sort]
-        U_vec = U_vec[:,inds_sort]
-        outputs['eigh'] = {}
+        U_vec, l_val = eigh_(H_centred)
         outputs['eigh']['l_val'] = l_val
         outputs['eigh']['U_vec'] = U_vec
         inds_positive = np.where(l_val > eps)[0]
