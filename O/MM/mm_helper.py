@@ -728,6 +728,7 @@ class MM_system_helper:
         ###########################################
         FE_eigh = float(FE)
         U_vec, l_val = eigh_(H_centred)
+        outputs['eigh'] = {}
         outputs['eigh']['l_val'] = l_val
         outputs['eigh']['U_vec'] = U_vec
         inds_positive = np.where(l_val > eps)[0]
