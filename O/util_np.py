@@ -580,3 +580,19 @@ def make_COM_removal_matrix_general_(masses_or_weights, dim=3, return_ladJ = Fal
     return  output
     
 ## ## 
+
+def eigh_(C, eigenvalues_in_descending_order = True):
+    ''' 
+    C : matrix : symmetric square
+    U : matrix : eigenvectors (columns)
+    l : array  : eigenvalues
+    '''
+    l, U =  np.linalg.eigh(C)
+    if  eigenvalues_in_descending_order: sign = -1.0
+    else: sign = 1.0
+    inds_sort = np.argsort(sign * l)
+    l = np.array(l[inds_sort])
+    U = np.array(U[:,inds_sort])
+    return U, l 
+
+## ## 
