@@ -835,7 +835,7 @@ class MM_system_helper:
         if fixed_atom_index is not None:
             if verbose: print(f'... fixed_atom_index != None, see f0_fixed_atom in results ...')
             weights = np.zeros([self.N]); weights[0] = 1.0
-            ladJ = make_COM_removal_matrix_general_(weights, dim=3, True)['ladJ']
+            ladJ = make_COM_removal_matrix_general_(weights, 3, True)['ladJ']
             outputs['eigh']['f0_fixed_atom'] = outputs['eigh']['f0'] + ladJ
             if include_svd_result: outputs['svd']['f0_fixed_atom'] = outputs['svd']['f0'] + ladJ
         else: pass
