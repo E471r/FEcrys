@@ -486,7 +486,7 @@ def ADAM_np_(grad_,
         
     return x0, a-1.0
 
-def make_COM_removal_matrix_general_(masses, dim=3, return_parts = False):
+def make_COM_removal_matrix_general_(masses_or_weights, dim=3, return_ladJ = False):
     '''
     r_flat_centred = M.dot(r_flat) ; (3N,) -> (3N,)
     
@@ -498,10 +498,11 @@ def make_COM_removal_matrix_general_(masses, dim=3, return_parts = False):
         (n_particles - 1)*dim - dim next eigenvalues are 1
         remaining dim eigenvalues are 0
     '''
-    masses = np.array(masses).flatten()
-    reduced_masses = masses/masses.sum()
 
-    N = len(masses)
+    w = np.array(masses_or_weights).flatten()
+    reduced_w = w/w.sum()
+
+    N = len(w)
     M = np.zeros([N*dim, N*dim])
     ia = 0
     for i in range(N):
@@ -510,25 +511,71 @@ def make_COM_removal_matrix_general_(masses, dim=3, return_parts = False):
             for j in range(N):
                 for _j in range(dim):
                     if ia==ja:
-                        M[ia,ja] = 1.0 - reduced_masses[j]
+                        M[ia,ja] = 1.0 - reduced_w[j]
                     elif not (ia-ja)%dim:
-                        M[ia,ja] = - reduced_masses[j]
+                        M[ia,ja] = - reduced_w[j]
                     else: pass 
                     ja += 1
             ia += 1
 
     output = {"M":M}
 
-    if return_parts:
+    if return_ladJ:
+        ''' dim == 3
+        
+        Any FE method uses a certain constraint on translation of the system.
+        * In Cartesian space, such a constraint is described by a linear transformation.
+        for example, cases:
+            (1) fixing centre of mass of whole system (most common, but not always convenient/possible)
+                input := masses
+            (2) fixing centre of geometry of whole system (e.g., monatomic systems)
+                input := ones
+            (3) fixing centre of mass according to a subset of atoms
+                input := some non-zero masses
+            (4) fixing centre of geometry according to a subset of atoms (e.g., one atom from each molecule is fixed)
+                input := some non-zero ones
+            (5) fixing just a single one atom out of the whole system
+                input := one-hot vector
+        Each above case is described by a different choice of masses_or_weights input array.
+        * Applying any of the above constraints can be described by y = M.dot(x).
+        where M is the matrix created above. The Jacobian of the transformation (x->y) is M.
+        The log determinant of this Jacobian is below labeled as ladJ.
+        The number (ladJ) is different depending on the constraint use.
+        Only case 2 is special (ladJ is zero), all other cases have ladJ > 0.
+       
+        If not yet included in FE methods (e.g., not included yet in this repository),
+        add the relevant ladJ from here to the system-wide FE estimated by a the given method.
+        You may find that methods will agree on absolute FE estimates,
+        regardless of the choice of masses_or_weights used across methods.
+
+        Concrete use-case:
+
+            N = n_mol*n_atoms_mol # single-component
+
+            Case 4 is applicable in FEs from:
+                SingleComponent_map : NVT
+
+                    w = np.zeros([N]) 
+                    w[:n_mol] = 1.0
+                    # this : input -> ladJ
+                    FEcrys += ladJ # kT units
+
+            Case 5 is applicable in FEs from:
+                SingleComponent_map_r : NVT
+                SingleComponent_map_rb : NPT
+
+                    w = np.zeros([N]) 
+                    w[:1] = 1.0
+                    input := w
+                    # this : input -> ladJ
+                    FEcrys += ladJ # kT units
+                    
+            Comparing FEcrys from SingleComponent_map and SingleComponent_map_r should now give the same result.
+            TODO: Test more to assert consistency of this entropic correction.
+        '''
         U,s,V = np.linalg.svd(M)
-        s_sqrt = s[:-dim]**0.5
-        Ji = U[:,:-dim].dot(np.diag(s_sqrt))
-        Jf = np.diag(s_sqrt).dot(V[:-dim,:])
-        # Ji.dot(Jf) = M
-        output["Ji"]     = Ji
-        output["Jf"]     = Jf
-        output["s_sqrt"] = s_sqrt
-        output["ladJ"]   = np.log(s_sqrt).sum() # the 'magic' offset between methods?
+        output["ladJ"]   = np.log(s[:-dim]).sum()
+    else: pass
 
     return  output
     
