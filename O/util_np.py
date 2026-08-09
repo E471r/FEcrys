@@ -588,7 +588,7 @@ def eigh_(C, eigenvalues_in_descending_order = True):
     l : array  : eigenvalues
     '''
     l, U =  np.linalg.eigh(C)
-    if  eigenvalues_in_descending_order: sign = -1.0
+    if eigenvalues_in_descending_order: sign = -1.0
     else: sign = 1.0
     inds_sort = np.argsort(sign * l)
     l = np.array(l[inds_sort])
