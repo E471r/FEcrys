@@ -532,7 +532,7 @@ def make_COM_removal_matrix_general_(masses_or_weights, dim=3, return_ladJ = Fal
                 input := ones
             (3) fixing centre of mass according to a subset of atoms
                 input := some non-zero masses
-            (4) fixing centre of geometry according to a subset of atoms (e.g., one atom from each molecule is fixed)
+            (4) fixing centre of geometry according to a subset of atoms (e.g., one atom per molecule)
                 input := some non-zero ones
             (5) fixing just a single one atom out of the whole system
                 input := one-hot vector
