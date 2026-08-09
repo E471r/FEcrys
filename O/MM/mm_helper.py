@@ -710,7 +710,7 @@ class MM_system_helper:
             outputs['H_sym'] = H
         else: outputs['H_sym'] = None
 
-        M = make_COM_removal_matrix_general_(np.ones([self.N]), dim=3, return_parts=False)['M']
+        M = make_COM_removal_matrix_general_(np.ones([self.N]), dim=3)['M']
         
         H_centred = M.T.dot(H).dot(M)
         outputs['H_centred'] = H_centred
@@ -835,123 +835,12 @@ class MM_system_helper:
         if fixed_atom_index is not None:
             if verbose: print(f'... fixed_atom_index != None, see f0_fixed_atom in results ...')
             weights = np.zeros([self.N]); weights[0] = 1.0
-            ladJ = 2.0 * make_COM_removal_matrix_general_(weights, dim=3, return_parts=True)['ladJ']
+            ladJ = make_COM_removal_matrix_general_(weights, dim=3, True)['ladJ']
             outputs['eigh']['f0_fixed_atom'] = outputs['eigh']['f0'] + ladJ
             if include_svd_result: outputs['svd']['f0_fixed_atom'] = outputs['svd']['f0'] + ladJ
         else: pass
 
         return outputs
-    
-    """ v1 (OLD)
-    def _Hessian_(self, r, b=None, dr = 0.0001,
-                  fixed_atom_index = None,
-                  temperature_reduced = True,
-                  ):
-        if temperature_reduced:
-            assert self.beta > 1e-6, f'temperature {1/(self.beta*CONST_kB)} K is too low'
-            temp_rescale = float(self.beta)
-        else: temp_rescale = 1.0
-
-        fixed_atom_mask = np.ones([self.N,3])
-        if fixed_atom_index is not None: 
-            fixed_atom_mask[fixed_atom_index] = 0.0
-        else: pass
-        fixed_atom_mask = fixed_atom_mask.flatten()
-        inds_valid = np.where(fixed_atom_mask>0.5)[0]
-
-        r_flat = np.array(r.flatten())
-        Hessian = np.zeros([self.N*3, self.N*3])
-        for i in inds_valid:
-            dr_i = np.zeros([self.N*3])
-            dr_i[i] = dr
-            A = reshape_to_atoms_np_(np.array(r_flat + dr_i)[None,...], n_atoms_in_molecule=self.N, n_molecules=1)
-            B = reshape_to_atoms_np_(np.array(r_flat - dr_i)[None,...], n_atoms_in_molecule=self.N, n_molecules=1)
-            dUdr_A = - self.F_GPU_(A, b=b).flatten()
-            dUdr_B = - self.F_GPU_(B, b=b).flatten()
-            Hessian[i] = dUdr_B - dUdr_A
-
-        return Hessian * temp_rescale / (2.0 * dr) # finite difference of the forces
-
-    def harmonic_FE_(self, r, b, fixed_atom_index:int, dr = 0.0001,
-                     # minimisation settings:
-                     n_steps_openmm = 2,
-                     n_steps_adam = 5000, # 0 : None to turn it off
-                     alpha_adam = 1e-4,
-                     verbose = True,
-                     ):
-        ''' Classical Harmonic Approximation : configurational part only. Momentum not included here.
-        Inputs:
-            r : (N,3) array of positions
-            b : (3,3) array of box 
-            fixed_atom_index : index of atom to keep fixed; the only constraint in a crystal.
-        Parameters:
-            dr : finite difference parameter; can try a few small positive values for a stable output
-            n_minimisations : number of times to run potential energy gradient descent (box is fixed).
-
-        Output: dictionary = {
-            'f0' = configurational Helmholtz per system FE in kT at the local minimum
-            'u0' = potential energy per system in kT at the local minimum
-            'r0' = minimised structure at the local minimum
-            }
-
-        Limitation: 
-            Classical and requires finite temperature
-            Box is not minimised, fixed as the original input (b) provided
-        '''
-        # checking inputs are for a single crystal
-        assert r.shape[-2:] == (self.N,3), 'Harmonic_FE_ : r.shape incorrect'
-        assert b.shape[-2:] == (3,3), 'Harmonic_FE_ : b.shape incorrect'
-        r = np.array(r).reshape([1, self.N, 3])
-        b = np.array(b).reshape([1, 3, 3])
-
-        fix_atom_ = lambda r : r - r[:,fixed_atom_index:fixed_atom_index+1]
-
-        r = fix_atom_(r)
-        u0_initial = self._U_GPU_(r, b=b).sum() * self.beta
-
-        if n_steps_openmm > 0:
-            for step in range(n_steps_openmm):
-                # find the local minimum, r only (lattice minimsation not implemented here yet)
-                r = self.minimise_xyz_(r, b=b)
-                r = fix_atom_(r)
-            u0_openmm_minimised = self._U_GPU_(r, b=b).sum() * self.beta
-            assert u0_openmm_minimised <= u0_initial
-            if verbose: print(textwrap.dedent(f'''
-                minimised with OpenMM for {n_steps_openmm} steps
-                u : {u0_initial} -> {u0_openmm_minimised}
-                '''))
-
-        if n_steps_adam > 0:
-            r, n_steps = ADAM_np_(grad_ = lambda _r : - self.F_GPU_(_r, b=b), 
-                                  x0 = r, 
-                                  constraint_ = fix_atom_,
-                                  max_itter = n_steps_adam,
-                                  alpha = alpha_adam,
-                                  betas=[0.7,0.999], tol=1e-4,
-                                  )
-            u0_fully_minimised = self._U_GPU_(r, b=b).sum() * self.beta
-            assert u0_fully_minimised <= u0_openmm_minimised
-            if verbose: print(textwrap.dedent(f'''
-                minimised with ADAM for {int(n_steps)} steps
-                u : {u0_openmm_minimised} -> {u0_fully_minimised}
-                '''))
-
-        u0 = self._U_GPU_(r, b=b).sum() * self.beta
-        # units: kT / nm**2
-        if verbose: print(f'estimating Hessian ({self.N*3}, {self.N*3}):')
-        H = self._Hessian_(r, b=b, dr=dr, fixed_atom_index=fixed_atom_index)
-        l_H = np.linalg.svd(H)[1][:-3]         # choosing top (N-1)*3 eigenvalues, others are zero
-        FE = 0.0
-        # energy:
-        FE += u0                               # potential energy at the local minimum in kT
-        # entropy:
-        FE += np.log(l_H).sum()*0.5            # positive sign here, because H = inv(Cov)
-        FE -= (self.N-1)*3*0.5*np.log(2*np.pi) # (N-1)*3 degrees of freedom !
-        
-        output = {'f0':FE, 'u0':u0, 'r0': r} # kT, kT, nm
-
-        return output
-    """
     
     # simulation:
 
